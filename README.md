@@ -42,11 +42,12 @@ git push
 
 Team members re-installing or updating the plugin pick up the new playbook.
 
-By default `scripts/fetch-pr-comments.sh` pulls the most recent 2000 review comments from `ubicloud/ubicloud`. Override:
+By default `scripts/fetch-pr-comments.sh` pulls the most recent 2000 review comments from `ubicloud/ubicloud` on first run, then incrementally fetches only new comments on subsequent runs (using the GitHub API's `since` filter and deduping by `html_url`). Override:
 
 ```sh
 scripts/fetch-pr-comments.sh --limit 500
 scripts/fetch-pr-comments.sh --repo other-org/other-repo
+scripts/fetch-pr-comments.sh --full           # force full refetch from scratch
 ```
 
 ## Layout
