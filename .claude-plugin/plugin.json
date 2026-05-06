@@ -1,0 +1,8 @@
+{
+  "name": "ubi-reviewer",
+  "description": "Code reviewer for the ubicloud repository, guided by a playbook distilled from past PR comments.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Ubicloud"
+  }
+}
