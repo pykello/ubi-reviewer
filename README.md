@@ -8,13 +8,14 @@ A Claude Code plugin that reviews ubicloud code changes, guided by a playbook of
 # In Claude Code
 /plugin marketplace add <git-url-of-this-repo>
 /plugin install ubi-reviewer@ubi-reviewer
+/reload-plugins
 ```
 
 Then, from inside an ubicloud checkout:
 
 ```
-/ubi-review            # review current branch vs main
-/ubi-review 1234       # review PR #1234
+/ubi-reviewer:ubi-review           # review current branch vs main
+/ubi-reviewer:ubi-review 1234       # review PR #1234
 ```
 
 ## How it works
@@ -34,7 +35,7 @@ git clone <this-repo>
 cd ubi-reviewer
 gh auth login                              # if not already
 # In Claude Code, from inside this repo:
-/ubi-distill
+/ubi-reviewer:ubi-distill
 git diff playbook.md                       # review the changes
 git commit -am "Refresh playbook (NN comments)"
 git push
