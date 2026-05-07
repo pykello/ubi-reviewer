@@ -1,24 +1,52 @@
 ---
-description: Distill past ubicloud PR review comments into a reviewer playbook (maintainers only).
+description: Distill ubicloud PR review comments into a categorized, severity-sorted playbook (maintainers only).
 ---
 
-You are regenerating the playbook used by `/ubi-review`. This is a **maintainer command** that should be run from inside a clone of the `ubi-reviewer` source repo, because it writes back to `playbook.md` which gets committed and shared with the team.
+You are regenerating `playbook.md`, used by `/ubi-review`. This is a **maintainer command** that should be run from inside a clone of the `ubi-reviewer` source repo, because it writes back to `playbook.md` which gets committed and shared with the team.
+
+## Prerequisite
+
+The operator is responsible for fetching comments **before** running this command:
+
+```sh
+gh auth login                          # if not already
+scripts/fetch-pr-comments.sh           # writes data/pr-comments.jsonl
+```
+
+If `data/pr-comments.jsonl` is missing or empty, stop and tell the operator to run the fetch script first. **Do not run the fetch script yourself.**
 
 ## Steps
 
-1. **Verify location.** Confirm the working directory contains `.claude-plugin/plugin.json` with `"name": "ubi-reviewer"`. If not, stop and tell the user to `cd` into their clone of the ubi-reviewer repo before running this.
+1. **Verify location.** Confirm the working directory contains `.claude-plugin/plugin.json` with `"name": "ubi-reviewer"`. If not, stop and tell the operator to `cd` into their clone of the ubi-reviewer repo.
 
-2. **Fetch comments if missing or stale.** Check whether `data/pr-comments.jsonl` exists and was modified within the last 7 days. If not, run `scripts/fetch-pr-comments.sh` (it requires `gh auth login`). If the user passed an argument like `--limit 500`, forward it.
+2. **Load all comments.** Read `data/pr-comments.jsonl`. Each line is `{pr, path, diff_hunk, body, user, created_at, html_url}`. Use **every** comment — do not filter by length, author, or perceived value. The goal is full coverage of the team's review patterns.
 
-3. **Read and analyze the comments.** Load `data/pr-comments.jsonl`. Each line is `{pr, path, diff_hunk, body, user, created_at, html_url}`. Skip comments that are:
-   - Replies in a thread (often start with `@username` — they're conversation, not guidance)
-   - Praise without instruction ("LGTM", "nice", "thanks")
-   - Author self-notes ("I'll fix this", "todo")
-   - Trivially specific ("rename this var to `foo`" with no general principle)
+3. **Categorize every comment.** Assign each comment to a topical category. Suggested categories (extend as the data demands):
+   - Correctness / bugs
+   - Security
+   - Concurrency / race conditions
+   - Database / Sequel idioms
+   - Performance (N+1, hot paths)
+   - Testing patterns
+   - Error handling
+   - Naming and readability
+   - API / Roda routing conventions
+   - Logging / observability
+   - Commit / PR hygiene
+   - Style nits
 
-4. **Cluster into rules.** Group remaining comments by underlying principle. Look for recurring themes — the same critique appearing across multiple PRs is the strongest signal. Examples of clusters you might find: testing patterns, error handling, naming conventions, framework-specific idioms (Sequel, Roda), security guidelines, performance pitfalls, commit/PR hygiene.
+   Comments that are pure conversation (replies, "thanks", "done", "@user can you…") with no actionable principle can be grouped under a single **"Non-actionable"** category and surfaced in a closing note — but do not silently drop them. The operator should be able to see how many were skipped and why.
 
-5. **Write `playbook.md`** with this structure:
+4. **Assign severity per rule.** Each derived rule gets one of:
+   - **blocker** — correctness, security, data-integrity, or a recurring violation that maintainers consistently push back on
+   - **major** — likely problem, non-trivial regression, or a clear team standard
+   - **minor** — style preference, naming nit, small ergonomic improvement
+
+   **Author weighting:** comments authored by **Jeremy Evans** (`jeremyevans` on GitHub) are treated as **major or higher** by default — promote to blocker if the comment is about correctness, security, or testing rigor. Demote to minor only if Jeremy explicitly hedges ("nice to have", "minor", "not blocking", "optional", "if you want", "feel free to ignore").
+
+5. **Cluster into rules.** Group comments by underlying principle. Recurrence across PRs strengthens severity. **Do not cap the number of rules** — produce as many as the data warrants. A long playbook is fine if every rule is grounded in real comments.
+
+6. **Write `playbook.md`** with this structure:
 
    ```markdown
    # Ubicloud Reviewer Playbook
@@ -26,27 +54,38 @@ You are regenerating the playbook used by `/ubi-review`. This is a **maintainer 
    _Generated from N PR review comments. Last updated: YYYY-MM-DD._
 
    ## How to use this playbook
-   You are reviewing changes to the ubicloud repository. For each rule below,
-   check whether the diff violates it. When you flag an issue, cite the rule
-   number and link to one of the example PRs.
+   You are reviewing changes to the ubicloud repository. Walk **every** rule
+   below and check whether the diff violates it. When you flag an issue, cite
+   the rule number and link to one of the example PRs.
 
-   ## Rules
+   ## Blocker
 
-   ### R1. <Short imperative title>
+   ### R1. <Short imperative title> — <Category>
+   **Severity:** blocker
    **Rule:** <one-sentence rule, imperative voice>
-   **Why:** <rationale, ideally drawn from the comments themselves>
-   **How to spot:** <what pattern in a diff should trigger this>
-   **Examples:** <PR #123, PR #456> (link via the html_url)
+   **Why:** <rationale, drawn from the comments>
+   **How to spot:** <pattern in a diff that should trigger this>
+   **Examples:** [PR #123](url), [PR #456](url)
 
    ### R2. ...
+
+   ## Major
+
+   ### R<n>. ...
+
+   ## Minor
+
+   ### R<n>. ...
+
+   ## Non-actionable (excluded)
+   _<count> comments were classified as conversation/non-actionable and not turned into rules. Examples of what was skipped: …_
    ```
 
-   Aim for **15–30 high-signal rules**. Better to have fewer strong rules than many weak ones. Each rule should be something a reviewer would actually flag.
+   Sort top-level by severity (blocker → major → minor). Within a severity, order by recurrence (most-cited first). Number rules sequentially across the whole document (R1, R2, … R_N) so `/ubi-review` can cite them stably.
 
-6. **Report back.** After writing `playbook.md`, summarize:
+7. **Report back.** After writing `playbook.md`, summarize:
    - How many comments were ingested
-   - How many rules were extracted
-   - Any clusters you noticed but excluded (and why)
+   - How many rules were extracted, broken down by severity (blocker / major / minor)
+   - How many comments fell into "Non-actionable"
+   - How many of the rules were promoted to major/blocker because Jeremy Evans authored or co-signed them
    - Suggested next step: `git diff playbook.md`, review, commit, push
-
-Remember: the playbook is **shared with the team**, so be conservative. A noisy rule wastes everyone's time. When in doubt, leave it out.
