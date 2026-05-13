@@ -24,7 +24,12 @@ If `data/pr-comments.jsonl` is missing or empty, stop and tell the operator to r
 
 1. **Verify location.** Confirm the working directory contains `.claude-plugin/plugin.json` with `"name": "ubi-reviewer"`. If not, stop and tell the operator to `cd` into their clone of the ubi-reviewer repo.
 
-2. **Load all comments.** Read `data/pr-comments.jsonl`. Each line is `{pr, path, diff_hunk, body, user, created_at, html_url}`. Use **every** comment — do not filter by length, author, or perceived value. The goal is full coverage of the team's review patterns.
+2. **Load all comments.** Read `data/pr-comments.jsonl`. Each line is `{pr, kind, path?, diff_hunk?, body, user, created_at, html_url}` where `kind` is one of:
+   - **`inline`** — comment on a specific diff line. Includes `path` and `diff_hunk` for code context. Authored by *any* reviewer.
+   - **`conversation`** — comment on the PR conversation tab. No code context. Authored by **Jeremy Evans only** (filtered at fetch time).
+   - **`summary`** — body of a PR review (approve / request changes). No code context. Authored by **Jeremy Evans only**.
+
+   Use **every** comment — do not filter by length, author, kind, or perceived value. Conversation and summary entries lack `diff_hunk`, so the rule's "How to spot" guidance has to be derived from the body alone — that's fine, just acknowledge in the rule when the original feedback was architectural rather than line-level.
 
 3. **Categorize every comment.** Assign each comment to a topical category. Suggested categories (extend as the data demands):
    - Correctness / bugs
@@ -47,7 +52,7 @@ If `data/pr-comments.jsonl` is missing or empty, stop and tell the operator to r
    - **major** — likely problem, non-trivial regression, or a clear team standard
    - **minor** — style preference, naming nit, small ergonomic improvement
 
-   **Author weighting:** comments authored by **Jeremy Evans** (`jeremyevans` on GitHub) are treated as **major or higher** by default — promote to blocker if the comment is about correctness, security, or testing rigor. Demote to minor only if Jeremy explicitly hedges ("nice to have", "minor", "not blocking", "optional", "if you want", "feel free to ignore").
+   **Author weighting:** comments authored by **Jeremy Evans** (`jeremyevans` on GitHub) are treated as **major or higher** by default — promote to blocker if the comment is about correctness, security, or testing rigor. Demote to minor only if Jeremy explicitly hedges ("nice to have", "minor", "not blocking", "optional", "if you want", "feel free to ignore"). This applies to all three kinds (inline / conversation / summary). For summary entries especially, watch for an overall verdict tone — if Jeremy used the review to request changes broadly, the rules derived from it are blocker-grade.
 
 5. **Cluster into rules.** Group comments by underlying principle. Recurrence across PRs strengthens severity. **Do not cap the number of rules** — produce as many as the data warrants. A long playbook is fine if every rule is grounded in real comments.
 
@@ -90,6 +95,7 @@ If `data/pr-comments.jsonl` is missing or empty, stop and tell the operator to r
 
 7. **Generate `playbook-extra.md` from Jeremy's external comments.** If `data/jeremy-pr-comments.jsonl` exists and is non-empty, repeat steps 2–6 against that file with these adjustments:
    - Each line additionally has a `repo` field (e.g. `jeremyevans/sequel`). Include the repo in the example links: `[sequel#1234](https://github.com/jeremyevans/sequel/pull/1234)`.
+   - Every entry is authored by Jeremy (filtered at fetch time), so the author weighting in step 4 always applies.
    - **Number rules `E1, E2, …`** (E for "external") so they don't collide with the main playbook's `R*` numbering.
    - Default every rule to **major** severity. Promote to blocker for correctness/security/testing issues. Demote to minor only when Jeremy explicitly hedges in the comment ("nice to have", "minor", "not blocking", "optional", "if you want", "feel free to ignore").
    - Cluster carefully: many of Jeremy's external comments are framework-specific (Sequel internals, Roda routing tree, Rodauth feature wiring). Keep rules that translate to general code quality / patterns ubicloud uses. Move framework-trivia rules into a closing "Framework-specific (informational)" section rather than the main severity buckets.
@@ -108,7 +114,7 @@ If `data/pr-comments.jsonl` is missing or empty, stop and tell the operator to r
      ```
 
 8. **Report back.** After writing the playbook(s), summarize:
-   - For `playbook.md`: comments ingested; rules extracted by severity; non-actionable count; how many were promoted to major/blocker due to Jeremy authorship.
-   - For `playbook-extra.md` (if generated): comments ingested per source repo; rules extracted by severity; framework-specific count.
+   - For `playbook.md`: comments ingested **broken down by kind** (inline / conversation / summary); rules extracted by severity; non-actionable count; how many were promoted to major/blocker due to Jeremy authorship.
+   - For `playbook-extra.md` (if generated): comments ingested per source repo and by kind; rules extracted by severity; framework-specific count.
    - If `playbook-extra.md` was skipped, say so and link to `scripts/fetch-jeremy-comments.sh`.
    - Suggested next step: `git diff playbook*.md`, review, commit, push.

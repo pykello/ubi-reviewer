@@ -66,24 +66,38 @@ git push
 
 Note: `/ubi-distill` does **not** call the fetch scripts — it expects the JSONL files to already exist. Run them yourself first. If `data/jeremy-pr-comments.jsonl` is absent, `/ubi-distill` will skip `playbook-extra.md` and proceed with only the main playbook.
 
+### Three "review surfaces"
+
+Both fetch scripts capture comments from three GitHub surfaces and write them to JSONL with a `kind` field that distinguishes them:
+
+| `kind` | Endpoint | Has code context? |
+|---|---|---|
+| `inline` | `repos/{R}/pulls/comments` | yes (`path`, `diff_hunk`) |
+| `conversation` | `repos/{R}/issues/comments` (filtered to PR URLs) | no |
+| `summary` | `repos/{R}/pulls/{n}/reviews` (one fetch per reviewed PR) | no |
+
+Inline comments come from every reviewer; `conversation` and `summary` are filtered to Jeremy Evans at fetch time. This is intentional — broad reviewer signal where the comment is anchored to a specific line, and Jeremy's authoritative voice everywhere else.
+
 ### `fetch-pr-comments.sh` (ubicloud)
 
-Pulls the most recent 2000 review comments from `ubicloud/ubicloud` on first run, then incrementally fetches only new comments on subsequent runs (GitHub API's `since` filter, dedup by `html_url`).
+Fetches from `ubicloud/ubicloud` by default. First run seeds up to 2000 comments per surface (`--limit`); subsequent runs are incremental per surface via `since` (and `updated:>=<date>` for summaries). Dedup by `html_url`.
 
 ```sh
-scripts/fetch-pr-comments.sh --limit 500
+scripts/fetch-pr-comments.sh
 scripts/fetch-pr-comments.sh --repo other-org/other-repo
-scripts/fetch-pr-comments.sh --full        # force full refetch from scratch
+scripts/fetch-pr-comments.sh --limit 5000
+scripts/fetch-pr-comments.sh --je-user jeremyevans
+scripts/fetch-pr-comments.sh --full          # force full refetch from scratch
 ```
 
 ### `fetch-jeremy-comments.sh` (Jeremy Evans's OSS repos)
 
-Fetches review comments **authored by `jeremyevans`** across his popular repos. Defaults to `jeremyevans/sequel`, `jeremyevans/roda`, `jeremyevans/rodauth`, `jeremyevans/forme`. First run seeds up to 1000 of his comments per repo (newest first); subsequent runs are incremental per-repo via `since`.
+Fetches every surface filtered to `jeremyevans` across his popular repos. Defaults to `jeremyevans/sequel`, `jeremyevans/roda`, `jeremyevans/rodauth`, `jeremyevans/forme`. Per-(repo, kind) incremental tracking; first run seeds up to 5000 per (repo, surface).
 
 ```sh
 scripts/fetch-jeremy-comments.sh
 scripts/fetch-jeremy-comments.sh --repos jeremyevans/sequel,jeremyevans/erubi
-scripts/fetch-jeremy-comments.sh --limit 500
+scripts/fetch-jeremy-comments.sh --limit 5000
 scripts/fetch-jeremy-comments.sh --full
 ```
 
