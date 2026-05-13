@@ -1,19 +1,24 @@
 ---
-description: Distill ubicloud PR review comments into a categorized, severity-sorted playbook (maintainers only).
+description: Distill PR review comments into categorized, severity-sorted playbooks (maintainers only).
 ---
 
-You are regenerating `playbook.md`, used by `/ubi-review`. This is a **maintainer command** that should be run from inside a clone of the `ubi-reviewer` source repo, because it writes back to `playbook.md` which gets committed and shared with the team.
+You are regenerating two playbooks used by `/ubi-review`:
+- **`playbook.md`** — rules from ubicloud's own PR review comments (the primary playbook).
+- **`playbook-extra.md`** — rules from Jeremy Evans's review comments on his popular OSS repos (sequel, roda, rodauth, forme, …). Optional; only produced if Jeremy's comment data is available.
+
+This is a **maintainer command** that should be run from inside a clone of the `ubi-reviewer` source repo, because it writes the playbooks back into the working tree to be committed.
 
 ## Prerequisite
 
 The operator is responsible for fetching comments **before** running this command:
 
 ```sh
-gh auth login                          # if not already
-scripts/fetch-pr-comments.sh           # writes data/pr-comments.jsonl
+gh auth login                              # if not already
+scripts/fetch-pr-comments.sh               # writes data/pr-comments.jsonl
+scripts/fetch-jeremy-comments.sh           # writes data/jeremy-pr-comments.jsonl (optional)
 ```
 
-If `data/pr-comments.jsonl` is missing or empty, stop and tell the operator to run the fetch script first. **Do not run the fetch script yourself.**
+If `data/pr-comments.jsonl` is missing or empty, stop and tell the operator to run the fetch script first. **Do not run the fetch scripts yourself.** If only `data/pr-comments.jsonl` exists, generate `playbook.md` and skip `playbook-extra.md` (note this in the report).
 
 ## Steps
 
@@ -83,9 +88,27 @@ If `data/pr-comments.jsonl` is missing or empty, stop and tell the operator to r
 
    Sort top-level by severity (blocker → major → minor). Within a severity, order by recurrence (most-cited first). Number rules sequentially across the whole document (R1, R2, … R_N) so `/ubi-review` can cite them stably.
 
-7. **Report back.** After writing `playbook.md`, summarize:
-   - How many comments were ingested
-   - How many rules were extracted, broken down by severity (blocker / major / minor)
-   - How many comments fell into "Non-actionable"
-   - How many of the rules were promoted to major/blocker because Jeremy Evans authored or co-signed them
-   - Suggested next step: `git diff playbook.md`, review, commit, push
+7. **Generate `playbook-extra.md` from Jeremy's external comments.** If `data/jeremy-pr-comments.jsonl` exists and is non-empty, repeat steps 2–6 against that file with these adjustments:
+   - Each line additionally has a `repo` field (e.g. `jeremyevans/sequel`). Include the repo in the example links: `[sequel#1234](https://github.com/jeremyevans/sequel/pull/1234)`.
+   - **Number rules `E1, E2, …`** (E for "external") so they don't collide with the main playbook's `R*` numbering.
+   - Default every rule to **major** severity. Promote to blocker for correctness/security/testing issues. Demote to minor only when Jeremy explicitly hedges in the comment ("nice to have", "minor", "not blocking", "optional", "if you want", "feel free to ignore").
+   - Cluster carefully: many of Jeremy's external comments are framework-specific (Sequel internals, Roda routing tree, Rodauth feature wiring). Keep rules that translate to general code quality / patterns ubicloud uses. Move framework-trivia rules into a closing "Framework-specific (informational)" section rather than the main severity buckets.
+   - Use this header:
+
+     ```markdown
+     # Ubicloud Reviewer Playbook — Extras (Jeremy Evans patterns)
+
+     _Generated from N comments by jeremyevans across <list of repos>. Last updated: YYYY-MM-DD._
+
+     ## How to use this playbook
+     These rules are derived from Jeremy Evans's reviews on his own OSS projects
+     (Sequel, Roda, Rodauth, Forme, …). They represent his coding standards as
+     applied outside ubicloud. `/ubi-review` walks them alongside the main
+     playbook; cite the rule number (E1, E2, …) when flagging an issue.
+     ```
+
+8. **Report back.** After writing the playbook(s), summarize:
+   - For `playbook.md`: comments ingested; rules extracted by severity; non-actionable count; how many were promoted to major/blocker due to Jeremy authorship.
+   - For `playbook-extra.md` (if generated): comments ingested per source repo; rules extracted by severity; framework-specific count.
+   - If `playbook-extra.md` was skipped, say so and link to `scripts/fetch-jeremy-comments.sh`.
+   - Suggested next step: `git diff playbook*.md`, review, commit, push.
