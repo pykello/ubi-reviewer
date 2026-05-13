@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Fetch PR review activity authored by Jeremy Evans across his popular OSS repos.
-# Captures three review surfaces, all filtered to user.login == $USER:
+# Captures five review surfaces, all filtered to user.login == $USER:
 #   1. Inline review comments   — repos/{R}/pulls/comments
-#   2. PR conversation comments — repos/{R}/issues/comments (filtered to /pull/ URLs)
-#   3. PR review summaries      — repos/{R}/pulls/{n}/reviews (one fetch per reviewed PR)
+#   2. PR conversation comments — repos/{R}/issues/comments  (filtered to /pull/ URLs)
+#   3. PR review summaries      — repos/{R}/pulls/{n}/reviews (per reviewed PR)
+#   4. PR descriptions          — search/issues?q=is:pr+author:$USER (PR body)
+#   5. Commit messages          — repos/{R}/commits?author=$USER
 #
 # Usage:
 #   scripts/fetch-jeremy-comments.sh [--repos R1,R2,...] [--user LOGIN]
@@ -12,7 +14,7 @@
 # Defaults:
 #   repos = jeremyevans/sequel,jeremyevans/roda,jeremyevans/rodauth,jeremyevans/forme
 #   user  = jeremyevans
-#   limit = 5000  (per repo, per surface on first seed; incrementals are uncapped)
+#   limit = 1000000  (effectively unlimited; bound by API not the cap)
 #   out   = data/jeremy-pr-comments.jsonl
 #
 # Behavior:
@@ -23,15 +25,16 @@
 #
 # Output JSONL fields:
 #   { repo, pr, kind, path?, diff_hunk?, body, user, created_at, html_url }
-#   kind ∈ "inline" | "conversation" | "summary"
+#   kind ∈ "inline" | "conversation" | "summary" | "description" | "commit"
 #   path and diff_hunk are only present for kind == "inline".
+#   pr is absent for kind == "commit".
 
 set -euo pipefail
 
 DEFAULT_REPOS="jeremyevans/sequel,jeremyevans/roda,jeremyevans/rodauth,jeremyevans/forme"
 REPOS_CSV="$DEFAULT_REPOS"
 USER="jeremyevans"
-LIMIT_PER_REPO=5000
+LIMIT_PER_REPO=1000000
 OUT="data/jeremy-pr-comments.jsonl"
 FULL=0
 
@@ -188,10 +191,88 @@ fetch_summaries() {
   echo "[$repo summary] scanned $scanned PRs, added $added review bodies" >&2
 }
 
+fetch_descriptions() {
+  local repo=$1
+  local since
+  since=$(max_created_at "$repo" "description")
+
+  local q="is:pr author:$USER repo:$repo"
+  if [[ -n "$since" ]]; then
+    q="$q created:>=${since:0:10}"
+    echo "[$repo description] incremental: PRs created since ${since:0:10}..." >&2
+  else
+    echo "[$repo description] full seed: PRs authored by $USER (cap $LIMIT_PER_REPO)..." >&2
+  fi
+
+  local lines
+  lines=$(gh api --paginate -X GET 'search/issues' -f "q=$q" \
+    --jq '.items[]
+          | select(.body != null and (.body | length) > 0)
+          | {
+              pr: .number,
+              kind: "description",
+              body: .body,
+              user: .user.login,
+              created_at: .created_at,
+              html_url: .html_url
+            }' 2>/dev/null \
+    | jq -c --arg repo "$repo" '. + {repo: $repo}' \
+    | awk -v n="$LIMIT_PER_REPO" 'NR<=n')
+  if [[ -n "$lines" ]]; then
+    local n
+    n=$(printf '%s\n' "$lines" | wc -l | tr -d ' ')
+    printf '%s\n' "$lines" >> "$OUT"
+    echo "[$repo description] +$n" >&2
+  else
+    echo "[$repo description] +0" >&2
+  fi
+}
+
+fetch_commits() {
+  local repo=$1
+  local since
+  since=$(max_created_at "$repo" "commit")
+  local cap=$LIMIT_PER_REPO
+  local extra=""
+  if [[ -n "$since" ]]; then
+    extra="&since=$since"; cap=999999
+    echo "[$repo commit] incremental since $since..." >&2
+  else
+    echo "[$repo commit] full seed: commits by $USER (cap $LIMIT_PER_REPO)..." >&2
+  fi
+
+  local collected=0 page=1 per_page=100
+  while [[ $collected -lt $cap ]]; do
+    local batch rows filtered
+    batch=$(gh api -H "Accept: application/vnd.github+json" \
+      "repos/$repo/commits?per_page=$per_page&author=$USER&page=$page$extra" 2>/dev/null) || break
+    rows=$(jq 'length' <<<"$batch")
+    [[ "$rows" -eq 0 ]] && break
+    filtered=$(jq -c --arg user "$USER" --arg repo "$repo" '
+      .[]
+      | select(.commit.message != null and (.commit.message | length) > 0)
+      | {
+          repo: $repo,
+          kind: "commit",
+          body: .commit.message,
+          user: $user,
+          created_at: .commit.author.date,
+          html_url: .html_url
+        }
+    ' <<<"$batch")
+    collected=$(append_bounded "$filtered" "$collected" "$cap")
+    [[ "$rows" -lt "$per_page" ]] && break
+    page=$((page + 1))
+  done
+  echo "[$repo commit] +$collected" >&2
+}
+
 for REPO in "${REPOS[@]}"; do
   fetch_paged "$REPO" "pulls/comments"  "$JQ_INLINE" "inline"
   fetch_paged "$REPO" "issues/comments" "$JQ_CONVO"  "conversation"
   fetch_summaries "$REPO"
+  fetch_descriptions "$REPO"
+  fetch_commits "$REPO"
 done
 
 # Dedup globally by html_url.

@@ -24,12 +24,14 @@ If `data/pr-comments.jsonl` is missing or empty, stop and tell the operator to r
 
 1. **Verify location.** Confirm the working directory contains `.claude-plugin/plugin.json` with `"name": "ubi-reviewer"`. If not, stop and tell the operator to `cd` into their clone of the ubi-reviewer repo.
 
-2. **Load all comments.** Read `data/pr-comments.jsonl`. Each line is `{pr, kind, path?, diff_hunk?, body, user, created_at, html_url}` where `kind` is one of:
+2. **Load all comments.** Read `data/pr-comments.jsonl`. Each line is `{pr?, kind, path?, diff_hunk?, body, user, created_at, html_url}` where `kind` is one of:
    - **`inline`** — comment on a specific diff line. Includes `path` and `diff_hunk` for code context. Authored by *any* reviewer.
    - **`conversation`** — comment on the PR conversation tab. No code context. Authored by **Jeremy Evans only** (filtered at fetch time).
    - **`summary`** — body of a PR review (approve / request changes). No code context. Authored by **Jeremy Evans only**.
+   - **`description`** — body of a PR opened by Jeremy. Indicates the framing/justification he uses for his own changes. No code context. **Jeremy Evans only.**
+   - **`commit`** — a git commit message authored by Jeremy. No `pr` field. **Jeremy Evans only.** These are extremely numerous (thousands), so treat them as a corpus of his "voice" — they show what he considers worth recording (test additions, refactors with reasoning, fix descriptions). Many will be terse; cluster broadly rather than per-message.
 
-   Use **every** comment — do not filter by length, author, kind, or perceived value. Conversation and summary entries lack `diff_hunk`, so the rule's "How to spot" guidance has to be derived from the body alone — that's fine, just acknowledge in the rule when the original feedback was architectural rather than line-level.
+   Use **every** comment — do not filter by length, author, kind, or perceived value. The non-inline kinds lack `diff_hunk`, so the rule's "How to spot" guidance has to be derived from the body alone — that's fine, just acknowledge in the rule when the original feedback was architectural rather than line-level.
 
 3. **Categorize every comment.** Assign each comment to a topical category. Suggested categories (extend as the data demands):
    - Correctness / bugs
@@ -52,7 +54,7 @@ If `data/pr-comments.jsonl` is missing or empty, stop and tell the operator to r
    - **major** — likely problem, non-trivial regression, or a clear team standard
    - **minor** — style preference, naming nit, small ergonomic improvement
 
-   **Author weighting:** comments authored by **Jeremy Evans** (`jeremyevans` on GitHub) are treated as **major or higher** by default — promote to blocker if the comment is about correctness, security, or testing rigor. Demote to minor only if Jeremy explicitly hedges ("nice to have", "minor", "not blocking", "optional", "if you want", "feel free to ignore"). This applies to all three kinds (inline / conversation / summary). For summary entries especially, watch for an overall verdict tone — if Jeremy used the review to request changes broadly, the rules derived from it are blocker-grade.
+   **Author weighting:** comments authored by **Jeremy Evans** (`jeremyevans` on GitHub) are treated as **major or higher** by default — promote to blocker if the comment is about correctness, security, or testing rigor. Demote to minor only if Jeremy explicitly hedges ("nice to have", "minor", "not blocking", "optional", "if you want", "feel free to ignore"). This applies to all kinds (inline / conversation / summary / description / commit). For summary entries especially, watch for an overall verdict tone — if Jeremy used the review to request changes broadly, the rules derived from it are blocker-grade. For commit and description entries, the body is Jeremy's *self*-narration; weight commit-message patterns (e.g. "always include a test", "explain *why* in the body") as major when they show up consistently across many commits.
 
 5. **Cluster into rules.** Group comments by underlying principle. Recurrence across PRs strengthens severity. **Do not cap the number of rules** — produce as many as the data warrants. A long playbook is fine if every rule is grounded in real comments.
 
@@ -114,7 +116,7 @@ If `data/pr-comments.jsonl` is missing or empty, stop and tell the operator to r
      ```
 
 8. **Report back.** After writing the playbook(s), summarize:
-   - For `playbook.md`: comments ingested **broken down by kind** (inline / conversation / summary); rules extracted by severity; non-actionable count; how many were promoted to major/blocker due to Jeremy authorship.
+   - For `playbook.md`: comments ingested **broken down by kind** (inline / conversation / summary / description / commit); rules extracted by severity; non-actionable count; how many were promoted to major/blocker due to Jeremy authorship.
    - For `playbook-extra.md` (if generated): comments ingested per source repo and by kind; rules extracted by severity; framework-specific count.
    - If `playbook-extra.md` was skipped, say so and link to `scripts/fetch-jeremy-comments.sh`.
    - Suggested next step: `git diff playbook*.md`, review, commit, push.

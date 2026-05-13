@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Fetch PR review activity from a GitHub repo. Three review surfaces:
-#   1. Inline review comments   — repos/{R}/pulls/comments     (ALL authors)
-#   2. PR conversation comments — repos/{R}/issues/comments    (filtered to $JE_USER)
-#   3. PR review summaries      — repos/{R}/pulls/{n}/reviews  (filtered to $JE_USER)
+# Fetch PR review activity from a GitHub repo. Five review surfaces:
+#   1. Inline review comments   — repos/{R}/pulls/comments              (ALL authors)
+#   2. PR conversation comments — repos/{R}/issues/comments             (filtered to $JE_USER)
+#   3. PR review summaries      — repos/{R}/pulls/{n}/reviews           (filtered to $JE_USER)
+#   4. PR descriptions          — search/issues?q=is:pr+author:$JE_USER (PR bodies)
+#   5. Commit messages          — repos/{R}/commits?author=$JE_USER     (commit messages)
 #
 # Inline comments are kept from every author to maximize signal across reviewers.
-# Conversation comments and review summaries are filtered to Jeremy Evans — his
-# commentary carries authoritative weight for the playbook's severity heuristics.
-# Bot comments (user.type == "Bot") are always excluded.
+# The remaining three surfaces are filtered to Jeremy Evans — his commentary
+# (and his framing of his own changes) carries authoritative weight for the
+# playbook's severity heuristics. Bot comments are always excluded.
 #
 # Usage:
 #   scripts/fetch-pr-comments.sh [--repo OWNER/REPO] [--limit N] [--out PATH]
@@ -15,19 +17,20 @@
 #
 # Defaults:
 #   repo    = ubicloud/ubicloud
-#   limit   = 2000  (per surface, on first seed; incrementals are uncapped)
+#   limit   = 1000000  (effectively unlimited; bound by API not the cap)
 #   je-user = jeremyevans
 #   out     = data/pr-comments.jsonl
 #
 # Output JSONL fields:
 #   { pr, kind, path?, diff_hunk?, body, user, created_at, html_url }
-#   kind ∈ "inline" | "conversation" | "summary"
+#   kind ∈ "inline" | "conversation" | "summary" | "description" | "commit"
 #   path and diff_hunk are only present for kind == "inline".
+#   pr is absent for kind == "commit" (commits aren't tied to a PR).
 
 set -euo pipefail
 
 REPO="ubicloud/ubicloud"
-LIMIT_PER_SURFACE=2000
+LIMIT_PER_SURFACE=1000000
 OUT="data/pr-comments.jsonl"
 JE_USER="jeremyevans"
 FULL=0
@@ -179,9 +182,83 @@ fetch_summaries() {
   echo "[summary] scanned $scanned PRs, added $added review bodies" >&2
 }
 
+fetch_descriptions() {
+  local since
+  since=$(max_created_at "description")
+
+  local q="is:pr author:$JE_USER repo:$REPO"
+  if [[ -n "$since" ]]; then
+    q="$q created:>=${since:0:10}"
+    echo "[description] incremental: PRs created since ${since:0:10}..." >&2
+  else
+    echo "[description] full seed: PRs authored by $JE_USER (cap $LIMIT_PER_SURFACE)..." >&2
+  fi
+
+  local lines
+  lines=$(gh api --paginate -X GET 'search/issues' -f "q=$q" \
+    --jq '.items[]
+          | select(.body != null and (.body | length) > 0)
+          | {
+              pr: .number,
+              kind: "description",
+              body: .body,
+              user: .user.login,
+              created_at: .created_at,
+              html_url: .html_url
+            }' 2>/dev/null \
+    | awk -v n="$LIMIT_PER_SURFACE" 'NR<=n')
+  if [[ -n "$lines" ]]; then
+    local n
+    n=$(printf '%s\n' "$lines" | wc -l | tr -d ' ')
+    printf '%s\n' "$lines" >> "$OUT"
+    echo "[description] +$n" >&2
+  else
+    echo "[description] +0" >&2
+  fi
+}
+
+fetch_commits() {
+  local since
+  since=$(max_created_at "commit")
+  local cap=$LIMIT_PER_SURFACE
+  local extra=""
+  if [[ -n "$since" ]]; then
+    extra="&since=$since"; cap=999999
+    echo "[commit] incremental since $since..." >&2
+  else
+    echo "[commit] full seed: commits by $JE_USER (cap $LIMIT_PER_SURFACE)..." >&2
+  fi
+
+  local collected=0 page=1 per_page=100
+  while [[ $collected -lt $cap ]]; do
+    local batch rows filtered
+    batch=$(gh api -H "Accept: application/vnd.github+json" \
+      "repos/$REPO/commits?per_page=$per_page&author=$JE_USER&page=$page$extra" 2>/dev/null) || break
+    rows=$(jq 'length' <<<"$batch")
+    [[ "$rows" -eq 0 ]] && break
+    filtered=$(jq -c --arg user "$JE_USER" '
+      .[]
+      | select(.commit.message != null and (.commit.message | length) > 0)
+      | {
+          kind: "commit",
+          body: .commit.message,
+          user: $user,
+          created_at: .commit.author.date,
+          html_url: .html_url
+        }
+    ' <<<"$batch")
+    collected=$(append_bounded "$filtered" "$collected" "$cap")
+    [[ "$rows" -lt "$per_page" ]] && break
+    page=$((page + 1))
+  done
+  echo "[commit] +$collected" >&2
+}
+
 fetch_paged "pulls/comments"  "$JQ_INLINE" "inline"
 fetch_paged "issues/comments" "$JQ_CONVO"  "conversation"
 fetch_summaries
+fetch_descriptions
+fetch_commits
 
 # Dedup by html_url.
 jq -cs 'unique_by(.html_url) | .[]' "$OUT" > "$OUT.tmp" && mv "$OUT.tmp" "$OUT"

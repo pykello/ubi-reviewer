@@ -66,21 +66,23 @@ git push
 
 Note: `/ubi-distill` does **not** call the fetch scripts — it expects the JSONL files to already exist. Run them yourself first. If `data/jeremy-pr-comments.jsonl` is absent, `/ubi-distill` will skip `playbook-extra.md` and proceed with only the main playbook.
 
-### Three "review surfaces"
+### Five "review surfaces"
 
-Both fetch scripts capture comments from three GitHub surfaces and write them to JSONL with a `kind` field that distinguishes them:
+Both fetch scripts capture comments from five GitHub surfaces and write them to JSONL with a `kind` field that distinguishes them:
 
 | `kind` | Endpoint | Has code context? |
 |---|---|---|
 | `inline` | `repos/{R}/pulls/comments` | yes (`path`, `diff_hunk`) |
 | `conversation` | `repos/{R}/issues/comments` (filtered to PR URLs) | no |
-| `summary` | `repos/{R}/pulls/{n}/reviews` (one fetch per reviewed PR) | no |
+| `summary` | `repos/{R}/pulls/{n}/reviews` (per reviewed PR) | no |
+| `description` | `search/issues?q=is:pr+author:JE` (PR body) | no |
+| `commit` | `repos/{R}/commits?author=JE` (commit messages) | no, no `pr` either |
 
-Inline comments come from every reviewer; `conversation` and `summary` are filtered to Jeremy Evans at fetch time. This is intentional — broad reviewer signal where the comment is anchored to a specific line, and Jeremy's authoritative voice everywhere else.
+Inline comments come from every reviewer; the other four surfaces are filtered to Jeremy Evans at fetch time. This is intentional — broad reviewer signal where the comment is anchored to a specific line, and Jeremy's authoritative voice everywhere else (including how he frames his own changes in PR descriptions and commit messages).
 
 ### `fetch-pr-comments.sh` (ubicloud)
 
-Fetches from `ubicloud/ubicloud` by default. First run seeds up to 2000 comments per surface (`--limit`); subsequent runs are incremental per surface via `since` (and `updated:>=<date>` for summaries). Dedup by `html_url`.
+Fetches from `ubicloud/ubicloud` by default. Incremental per surface via `since` (and `updated:>=<date>` for summaries, `created:>=<date>` for descriptions, `since=` for commits). Dedup by `html_url`. Default `--limit` is effectively unlimited (1M); first seed grabs everything the API will give us.
 
 ```sh
 scripts/fetch-pr-comments.sh
@@ -92,7 +94,7 @@ scripts/fetch-pr-comments.sh --full          # force full refetch from scratch
 
 ### `fetch-jeremy-comments.sh` (Jeremy Evans's OSS repos)
 
-Fetches every surface filtered to `jeremyevans` across his popular repos. Defaults to `jeremyevans/sequel`, `jeremyevans/roda`, `jeremyevans/rodauth`, `jeremyevans/forme`. Per-(repo, kind) incremental tracking; first run seeds up to 5000 per (repo, surface).
+Fetches every surface filtered to `jeremyevans` across his popular repos. Defaults to `jeremyevans/sequel`, `jeremyevans/roda`, `jeremyevans/rodauth`, `jeremyevans/forme`. Per-(repo, kind) incremental tracking; default `--limit` is effectively unlimited.
 
 ```sh
 scripts/fetch-jeremy-comments.sh
@@ -100,6 +102,8 @@ scripts/fetch-jeremy-comments.sh --repos jeremyevans/sequel,jeremyevans/erubi
 scripts/fetch-jeremy-comments.sh --limit 5000
 scripts/fetch-jeremy-comments.sh --full
 ```
+
+Note: GitHub's Search API caps results at 1000 per query, which bounds `summary` and `description` surfaces. The other surfaces are unbounded.
 
 ## Layout
 
